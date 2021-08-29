@@ -19,10 +19,12 @@ void main() {
 
 @fs mesh_fs
 in vec4 color;
-out vec4 frag_color;
+layout (location = 0) out vec4 frag_color;
+layout (location = 1) out vec4 bright_color;
 
 void main() {
   frag_color = color;
+  bright_color = color * (1.0 - step(color.b, 0.8));
 }
 @end
 
@@ -43,13 +45,15 @@ void main() {
 
 @fs fsq_fs
 uniform sampler2D tex;
+uniform sampler2D bloomed;
 
 in vec2 uv;
 
 out vec4 frag_color;
 
 void main() {
-    frag_color = vec4(texture(tex, uv).rgb, 1);
+  vec3 t = texture(tex, uv).rgb + texture(bloomed, uv).rgb;
+  frag_color = vec4(t, 1);
 }
 @end
 @program fsq fsq_vs fsq_fs

@@ -33,22 +33,28 @@ static struct {
   sg_pipeline pip;
   sg_buffer ibuf, vbuf, quad_vbuf;
   struct {
-    sg_image pingpong_imgs[2], color_img, depth_img;
+    sg_image color_img, bright_img, depth_img;
     sg_pass_action pass_action;
-    sg_pass pass, pingpong_passes[2];
-    sg_pipeline blur_pip, pip;
+    sg_pass pass;
+    sg_pipeline pip;
   } offscreen;
+  struct {
+    sg_image imgs[2];
+    sg_pass passes[2];
+    sg_pipeline pip;
+  } blur;
 } state;
 
 /* must be called on resize */
-void offscreen_create_pass(void) {
+void resize_framebuffers(void) {
   /* destroy previous resource (can be called for invalid id) */
   sg_destroy_pass(state.offscreen.pass);
   sg_destroy_image(state.offscreen.color_img);
+  sg_destroy_image(state.offscreen.bright_img);
   sg_destroy_image(state.offscreen.depth_img);
   for (int i = 0; i < 2; i++) {
-    sg_destroy_image(state.offscreen.pingpong_imgs[i]);
-    sg_destroy_pass(state.offscreen.pingpong_passes[i]);
+    sg_destroy_image(state.blur.imgs[i]);
+    sg_destroy_pass(state.blur.passes[i]);
   }
 
   /* a render pass with one color- and one depth-attachment image */
@@ -64,32 +70,35 @@ void offscreen_create_pass(void) {
     .sample_count = OFFSCREEN_SAMPLE_COUNT,
     .label = "color-image"
   };
-  sg_image color_img = state.offscreen.color_img = sg_make_image(&img_desc);
+  state.offscreen.color_img = sg_make_image(&img_desc);
+  state.offscreen.bright_img = sg_make_image(&img_desc);
 
   for (int i = 0; i < 2; i++)
-    state.offscreen.pingpong_imgs[i] = sg_make_image(&img_desc);
+    state.blur.imgs[i] = sg_make_image(&img_desc);
   for (int i = 0; i < 2; i++)
-    state.offscreen.pingpong_passes[i] = sg_make_pass(&(sg_pass_desc) {
-      .color_attachments[0].image = state.offscreen.pingpong_imgs[i]
+    state.blur.passes[i] = sg_make_pass(&(sg_pass_desc) {
+      .color_attachments[0].image = state.blur.imgs[i]
     });
 
   img_desc.pixel_format = SG_PIXELFORMAT_DEPTH;
   img_desc.label = "depth-image";
   sg_image depth_img = state.offscreen.depth_img = sg_make_image(&img_desc);
   state.offscreen.pass = sg_make_pass(&(sg_pass_desc){
-    .color_attachments[0].image = color_img,
-    .depth_stencil_attachment.image = depth_img,
+    .color_attachments[0].image = state.offscreen.color_img,
+    .color_attachments[1].image = state.offscreen.bright_img,
+    .depth_stencil_attachment.image = state.offscreen.depth_img,
     .label = "offscreen-pass"
   });
 }
 
 /* can be called once on initialization */
 void offscreen_init(void) {
-  offscreen_create_pass();
+  resize_framebuffers();
 
   /* offscreen pass action */
   state.offscreen.pass_action = (sg_pass_action) {
-    .colors[0] = { .action = SG_ACTION_CLEAR, .value = { 0.25f, 0.25f, 0.25f, 1.0f } }
+    .colors[0] = { .action = SG_ACTION_CLEAR, .value = { 0.25f, 0.25f, 0.25f, 1.0f } },
+    .colors[1] = { .action = SG_ACTION_CLEAR, .value = { 0.00f, 0.00f, 0.00f, 0.0f } },
   };
 
   state.offscreen.pip = sg_make_pipeline(&(sg_pipeline_desc) {
@@ -102,6 +111,7 @@ void offscreen_init(void) {
     .shader = sg_make_shader(mesh_shader_desc(sg_query_backend())),
     .index_type = SG_INDEXTYPE_UINT16,
     .cull_mode = SG_CULLMODE_FRONT,
+    .color_count = 2,
     .depth = {
       .pixel_format = SG_PIXELFORMAT_DEPTH,
       .write_enabled = true,
@@ -109,7 +119,7 @@ void offscreen_init(void) {
     },
   });
 
-  state.offscreen.blur_pip = sg_make_pipeline(&(sg_pipeline_desc){
+  state.blur.pip = sg_make_pipeline(&(sg_pipeline_desc){
     .layout = {
       .attrs[ATTR_fsq_vs_pos].format = SG_VERTEXFORMAT_FLOAT2
     },
@@ -203,7 +213,7 @@ static void event(const sapp_event *ev) {
         sapp_request_quit();
     } break;
     case (SAPP_EVENTTYPE_RESIZED): {
-      offscreen_create_pass();
+      resize_framebuffers();
     } break;
   }
 }
@@ -235,13 +245,15 @@ void frame(void) {
 
   int horizontal = 1;
   for (int i = 0; i < 10; i++) {
-    sg_begin_pass(state.offscreen.pingpong_passes[horizontal], &(sg_pass_action) {
+    sg_begin_pass(state.blur.passes[horizontal], &(sg_pass_action) {
       .colors[0] = { .action = SG_ACTION_LOAD }
     });
-    sg_apply_pipeline(state.offscreen.blur_pip);
+    sg_apply_pipeline(state.blur.pip);
     sg_apply_bindings(&(sg_bindings) {
       .vertex_buffers[0] = state.quad_vbuf,
-      .fs_images = { [SLOT_tex] = i ? state.offscreen.pingpong_imgs[!horizontal] : state.offscreen.color_img }
+      .fs_images = {
+        [SLOT_tex] = i ? state.blur.imgs[!horizontal] : state.offscreen.bright_img
+      }
     });
     blur_fs_params_t fs_params = { .hori = vec2(horizontal, !horizontal) };
     sg_apply_uniforms(SG_SHADERSTAGE_FS, SLOT_blur_fs_params, &SG_RANGE(fs_params));
@@ -260,7 +272,10 @@ void frame(void) {
   sg_apply_pipeline(state.pip);
   sg_apply_bindings(&(sg_bindings) {
     .vertex_buffers[0] = state.quad_vbuf,
-    .fs_images = { [SLOT_tex] = state.offscreen.pingpong_imgs[!horizontal] }
+    .fs_images = {
+      [SLOT_tex] = state.offscreen.color_img,
+      [SLOT_bloomed] = state.blur.imgs[!horizontal]
+    }
   });
   sg_draw(0, 4, 1);
   sg_end_pass();
