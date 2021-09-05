@@ -263,10 +263,7 @@ void frame(void) {
   }
 
   sg_pass_action pass_action = {
-    .colors[0] = {
-      .action = SG_ACTION_CLEAR,
-      .value = { 0.25f / 15.f, 0.5f / 15.f, 0.75f / 15.f, 1.0f }
-    }
+    .colors[0] = { .action = SG_ACTION_CLEAR, .value = { 0.0f, 0.0f, 0.0f, 1.0f } }
   };
   sg_begin_default_pass(&pass_action, (int)w, (int)h);
   sg_apply_pipeline(state.pip);
