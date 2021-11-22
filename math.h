@@ -4,6 +4,7 @@
 
 #define m_min(a, b)            ((a) < (b) ? (a) : (b))
 #define m_max(a, b)            ((a) > (b) ? (a) : (b))
+#define m_sign(a)              ((a) < 0 ? -1 : 1)
 #define m_abs(a)               ((a) >  0  ? (a) : -(a))
 #define m_mod(a, m)            (((a) % (m)) >= 0 ? ((a) % (m)) : (((a) % (m)) + (m)))
 #define m_clamp(x, a, b)       (m_min(b, m_max(a, x)))
@@ -15,6 +16,8 @@
 #define vec3_y ((Vec3) { 0.0f, 1.0f, 0.0f })
 #define vec3_z ((Vec3) { 0.0f, 0.0f, 1.0f })
 
+#define vec4_f(f) ((Vec4) { f, f, f, f })
+
 #define sat_i8(x) (int8_t) (m_clamp((x), -128, 127))
 
 #define PI_f (3.14159265359f)
@@ -22,8 +25,14 @@
 const uint32_t positive_inf = 0x7F800000; // 0xFF << 23
 
 typedef struct { float x, y; } Vec2;
-typedef struct { float x, y, z; } Vec3;
-typedef struct { float x, y, z, w; } Vec4;
+typedef union {
+  struct { float x, y, z; };
+  float nums[3];
+} Vec3;
+typedef union {
+  struct { float x, y, z, w; };
+  float nums[4];
+} Vec4;
 typedef union {
     float nums[4][4];
     struct { Vec4 x, y, z, w; };
@@ -40,6 +49,7 @@ typedef union {
 //Utillity
 static float to_radians(float degrees);
 static float lerp(float a, float b, float t);
+static float lerp_rad(float a, float b, float t);
 static float sign(float f);
 static float step(float edge, float x);
 static uint32_t rand32(void);
@@ -67,6 +77,8 @@ static Vec2 sign2(Vec2 a);
 static Vec2 vec2_swap(Vec2 v);
 static Vec2 vec2_rot(float rot);
 static float rot_vec2(Vec2 rot);
+static Vec2 lerp2(Vec2 a, Vec2 b, float t);
+static Vec2 rand2(void);
 
 //3d
 static Vec3 vec3(float x, float y, float z);
@@ -111,11 +123,13 @@ static Vec4 sign4(Vec4 a);
 
 //Matrix
 static Mat4 mul4x4(Mat4 a, Mat4 b);
+static Vec4 mul4x44(Mat4 a, Vec4 b);
 static Mat4 scale4x4(Vec3 v);
 static Mat4 ident4x4();
 static Mat4 transpose4x4(Mat4 a);
 static Mat4 translate4x4(Vec3 pos);
 static Mat4 rotate4x4(Vec3 axis, float angle);
+static Mat4 x_rotate4x4(float angle);
 static Mat4 y_rotate4x4(float angle);
 static Mat4 z_rotate4x4(float angle);
 static Mat4 perspective4x4(float fov, float aspect, float n, float f);
@@ -136,6 +150,12 @@ static float to_radians(float degrees) {
 
 static float lerp(float a, float b, float t) {
   return (1.0f-t)*a+t*b;
+}
+
+static float lerp_rad(float a, float b, float t) {
+  float difference = fmodf(b - a, PI_f*2.0f),
+        distance = fmodf(2.0f * difference, PI_f*2.0f) - difference;
+  return a + distance * t;
 }
 
 static float sign(float f) {
@@ -371,6 +391,14 @@ static float rot_vec2(Vec2 rot) {
   return atan2f(rot.y, rot.x);
 }
 
+static Vec2 lerp2(Vec2 a, Vec2 b, float t) {
+  return add2(mul2_f(a, 1.0f - t), mul2_f(b, t));
+}
+
+static Vec2 rand2(void) {
+  return vec2_rot(randf() * PI_f);
+}
+
 static Vec3 max3_f(Vec3 v, float f) {
   return vec3(m_max(v.x, f), m_max(v.y, f), m_max(v.z, f));
 }
@@ -411,6 +439,18 @@ static Mat4 mul4x4(Mat4 a, Mat4 b) {
         out.nums[c][r] += a.nums[k][r] * b.nums[c][k];
     }
   return out;
+}
+
+static Vec4 mul4x44(Mat4 m, Vec4 v) {
+  Vec4 res;
+  for(int x = 0; x < 4; ++x) {
+    float sum = 0;
+    for(int y = 0; y < 4; ++y)
+      sum += m.nums[y][x] * v.nums[y];
+
+    res.nums[x] = sum;
+  }
+  return res;
 }
 
 static Mat4 scale4x4(Vec3 v) {
@@ -463,14 +503,25 @@ static Mat4 rotate4x4(Vec3 axis, float angle) {
   return res;
 }
 
+static Mat4 x_rotate4x4(float angle) {
+  float c = cosf(angle);
+  float s = sinf(angle);
+  return (Mat4) {{
+    1.0f, 0.0f, 0.0f, 0.0f,
+    0.0f,    c,    s, 0.0f,
+    0.0f,   -s,    c, 0.0f,
+    0.0f, 0.0f, 0.0f, 1.0f,
+  }};
+}
+
 static Mat4 y_rotate4x4(float angle) {
   float c = cosf(angle);
   float s = sinf(angle);
   return (Mat4) {{
-         c, 0.0f,   -s, 0.0f,
-      0.0f, 1.0f, 0.0f, 0.0f,
-         s, 0.0f,    c, 0.0f,
-      0.0f, 0.0f, 0.0f, 1.0f
+       c, 0.0f,   -s, 0.0f,
+    0.0f, 1.0f, 0.0f, 0.0f,
+       s, 0.0f,    c, 0.0f,
+    0.0f, 0.0f, 0.0f, 1.0f
   }};
 }
 
@@ -478,10 +529,10 @@ static Mat4 z_rotate4x4(float angle) {
   float c = cosf(angle);
   float s = sinf(angle);
   return (Mat4) {{
-         c,    s, 0.0f, 0.0f,
-        -s,    c, 0.0f, 0.0f,
-      0.0f, 0.0f, 1.0f, 0.0f,
-      0.0f, 0.0f, 0.0f, 1.0f
+       c,    s, 0.0f, 0.0f,
+      -s,    c, 0.0f, 0.0f,
+    0.0f, 0.0f, 1.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 1.0f
   }};
 }
 

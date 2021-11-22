@@ -19,13 +19,39 @@ void main() {
 
 @fs mesh_fs
 in vec4 color;
-layout (location = 0) out vec4 frag_color;
-layout (location = 1) out vec4 bright_color;
+out vec4 frag_color;
 
 void main() {
   frag_color = color;
-  bright_color = color * (1.0 - step(color.b, 0.8));
 }
 @end
 
 @program mesh mesh_vs mesh_fs
+
+
+@vs skybox_vs
+uniform mesh_vs_params {
+    mat4 mvp;
+};
+
+in vec3 position;
+out vec3 tex_coord;
+
+void main() {
+  tex_coord = position;
+  gl_Position = (mvp * vec4(position, 1)).xyww;
+}
+@end
+
+@fs skybox_fs
+uniform samplerCube skybox;
+
+out vec4 frag_color;
+in vec3 tex_coord;
+
+void main() {
+  frag_color = texture(skybox, tex_coord);
+}
+@end
+
+@program skybox skybox_vs skybox_fs

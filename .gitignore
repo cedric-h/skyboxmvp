@@ -2,5 +2,7 @@
 *.swo
 build/*
 
+*.png
+
 # testing main file
 test_main.c
